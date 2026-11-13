@@ -1,0 +1,86 @@
+{
+  "paths": {
+    "/api/v1/stores/{storeId}/l402/endpoints/{slug}/challenges": {
+      "post": {
+        "operationId": "Meterbolt_CreateL402Challenge",
+        "tags": ["L402 (Meterbolt)"],
+        "summary": "Create an L402 challenge",
+        "description": "Creates a Lightning-only BTCPay invoice for the paid endpoint and a macaroon bound to its payment hash. The price is the one configured in BTCPay. Send both to the client as `WWW-Authenticate: L402 macaroon=\"…\", invoice=\"…\"` with status 402.",
+        "parameters": [
+          { "name": "storeId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "slug", "in": "path", "required": true, "description": "Slug of the paid endpoint", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "201": {
+            "description": "Challenge created",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MeterboltChallenge" } } }
+          },
+          "400": { "description": "Lightning unavailable or price above the store maximum", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProblemDetails" } } } },
+          "404": { "description": "Unknown endpoint", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProblemDetails" } } } },
+          "409": { "description": "Endpoint disabled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProblemDetails" } } } }
+        },
+        "security": [ { "API_Key": ["btcpay.store.canissuel402"], "Basic": [] } ]
+      }
+    },
+    "/api/v1/stores/{storeId}/l402/verify": {
+      "post": {
+        "operationId": "Meterbolt_VerifyL402Token",
+        "tags": ["L402 (Meterbolt)"],
+        "summary": "Verify an L402 token",
+        "description": "Checks the macaroon signature, its caveats (endpoint, expiry), that sha256(preimage) equals the payment hash and that the invoice is settled. A successful verification counts as one paid call; single-use tokens are consumed.",
+        "parameters": [
+          { "name": "storeId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MeterboltVerifyRequest" } } }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification result. `valid` is false with a `reason` for rejected tokens.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MeterboltVerifyResult" } } }
+          },
+          "422": { "description": "Missing authorization value", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ValidationProblemDetails" } } } }
+        },
+        "security": [ { "API_Key": ["btcpay.store.canverifyl402"], "Basic": [] } ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "MeterboltChallenge": {
+        "type": "object",
+        "properties": {
+          "macaroon": { "type": "string", "description": "Base64 macaroon (V2 binary)" },
+          "invoice": { "type": "string", "description": "BOLT11 payment request" },
+          "paymentHash": { "type": "string" },
+          "invoiceId": { "type": "string", "description": "BTCPay invoice id" },
+          "amountSats": { "type": "integer" },
+          "invoiceExpiresAt": { "type": "integer", "description": "Unix time" },
+          "expiresAt": { "type": "integer", "description": "Unix time at which the token stops being valid" },
+          "wwwAuthenticate": { "type": "string", "description": "Ready-to-send WWW-Authenticate header value" }
+        }
+      },
+      "MeterboltVerifyRequest": {
+        "type": "object",
+        "required": ["authorization"],
+        "properties": {
+          "authorization": { "type": "string", "example": "L402 AgEEbHNhdAJCAAD…:a1b2c3…", "description": "The client's Authorization header value" },
+          "endpoint": { "type": "string", "nullable": true, "description": "Optional slug the token must be valid for" }
+        }
+      },
+      "MeterboltVerifyResult": {
+        "type": "object",
+        "properties": {
+          "valid": { "type": "boolean" },
+          "reason": { "type": "string", "nullable": true, "enum": ["malformed", "multiple-macaroons-unsupported", "unknown-token", "invalid-signature", "wrong-endpoint", "unknown-caveat", "expired", "invalid-preimage", "revoked", "endpoint-disabled", "not-paid", "already-used"] },
+          "endpoint": { "type": "string" },
+          "paymentHash": { "type": "string" },
+          "expiresAt": { "type": "integer", "description": "Unix time" },
+          "singleUse": { "type": "boolean" },
+          "uses": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

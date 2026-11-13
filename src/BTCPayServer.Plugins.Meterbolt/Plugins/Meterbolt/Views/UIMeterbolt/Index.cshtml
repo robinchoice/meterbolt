@@ -1,0 +1,142 @@
+@model IndexViewModel
+@{
+    ViewData.SetLayoutModel(new LayoutModel(Plugin.Area, StringLocalizer["L402 Paid APIs"]).SetCategory(WellKnownCategories.Store));
+    var permissions = $"permissions={Uri.EscapeDataString(MeterboltPolicies.CanIssue + ":" + Model.StoreId)}&permissions={Uri.EscapeDataString(MeterboltPolicies.CanVerify + ":" + Model.StoreId)}";
+    var appKeyUrl = $"{Context.Request.PathBase}/api-keys/authorize?{permissions}&applicationName=Meterbolt&strict=true";
+}
+
+<div class="sticky-header">
+    <vc:title-header />
+    <a id="page-primary" class="btn btn-primary" asp-action="Create" asp-route-storeId="@Model.StoreId" text-translate="true">New paid endpoint</a>
+</div>
+<partial name="_StatusMessage" />
+
+@section PageFootContent {
+    <script>
+        document.getElementById('Discovery').addEventListener('change', e => e.target.form.submit())
+    </script>
+}
+
+<p class="text-secondary mb-4" text-translate="true">Agents and apps pay per call over Lightning. Payments settle into this store's Lightning wallet.</p>
+
+<div class="widget d-flex flex-wrap gap-4 mb-5" id="Kpis">
+    <div class="flex-fill" style="min-width: 9rem">
+        <h6 class="text-secondary fw-semibold mb-2" text-translate="true">Revenue, 7 days</h6>
+        <div class="h3 mb-0">@Model.TotalRevenue.ToString("N0") <small class="text-secondary fs-6">sats</small></div>
+    </div>
+    <div class="flex-fill" style="min-width: 9rem">
+        <h6 class="text-secondary fw-semibold mb-2" text-translate="true">Paid calls, 7 days</h6>
+        <div class="h3 mb-0">@Model.TotalCalls.ToString("N0")</div>
+    </div>
+    <div class="flex-fill" style="min-width: 9rem">
+        <h6 class="text-secondary fw-semibold mb-2" text-translate="true">Lightning</h6>
+        <div class="h3 mb-0">
+            @if (Model.LightningEnabled)
+            {
+                <span class="badge badge-settled fs-6" text-translate="true">Ready</span>
+            }
+            else
+            {
+                <span class="badge badge-expired fs-6" text-translate="true">Not set up</span>
+                <a class="fs-6 ms-1" asp-area="" asp-controller="UIStores" asp-action="SetupLightningNode" asp-route-storeId="@Model.StoreId" asp-route-cryptoCode="BTC" text-translate="true">Set up</a>
+            }
+        </div>
+    </div>
+</div>
+
+<h3 class="mb-3" text-translate="true">Endpoints</h3>
+@if (Model.Endpoints.Count == 0)
+{
+    <p class="text-secondary mb-5">
+        <span text-translate="true">No paid endpoints yet. Create one, then let your API ask BTCPay for a challenge whenever a request comes in without a valid token.</span>
+    </p>
+}
+else
+{
+    <div class="table-responsive-md mb-5">
+        <table class="table table-hover mb-0" id="Endpoints">
+            <thead>
+                <tr>
+                    <th text-translate="true">Name</th>
+                    <th text-translate="true">Price</th>
+                    <th class="d-none d-md-table-cell" text-translate="true">Token valid</th>
+                    <th class="d-none d-md-table-cell" text-translate="true">Mode</th>
+                    <th class="text-end" text-translate="true">7 days</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var e in Model.Endpoints)
+                {
+                    var stats = Model.Stats.GetValueOrDefault(e.Id);
+                    <tr>
+                        <td>
+                            <a asp-action="Detail" asp-route-storeId="@Model.StoreId" asp-route-id="@e.Id" class="fw-semibold">@e.Name</a>
+                            @if (!e.Enabled)
+                            {
+                                <span class="badge badge-expired ms-1" text-translate="true">Disabled</span>
+                            }
+                            <div class="text-secondary small text-break">@(e.PublicUrl ?? e.Slug)</div>
+                        </td>
+                        <td class="text-nowrap">@e.PriceSats.ToString("N0") sats</td>
+                        <td class="d-none d-md-table-cell text-nowrap">@Lifetimes.Describe(e)</td>
+                        <td class="d-none d-md-table-cell"><span class="badge bg-light" text-translate="true">Greenfield</span></td>
+                        <td class="text-end text-nowrap">
+                            @((stats?.RevenueSats ?? 0).ToString("N0")) sats
+                            <div class="text-secondary small">@((stats?.Calls ?? 0) == 1 ? StringLocalizer["1 call"] : StringLocalizer["{0} calls", (stats?.Calls ?? 0).ToString("N0")])</div>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+<h3 class="mb-3" text-translate="true">Access & safety</h3>
+<div class="mb-5" id="AccessSafety">
+    <div class="row border-bottom py-3 mx-0">
+        <div class="col-md-3 ps-0 text-secondary mb-1 mb-md-0" text-translate="true">App key</div>
+        <div class="col-md-9 ps-0">
+            <span text-translate="true">A store key with only</span>
+            <code>@MeterboltPolicies.CanIssue</code> + <code>@MeterboltPolicies.CanVerify</code>.
+            <a href="@appKeyUrl" id="CreateAppKey" text-translate="true">Create</a>
+        </div>
+    </div>
+    <div class="row border-bottom py-3 mx-0">
+        <div class="col-md-3 ps-0 text-secondary mb-1 mb-md-0" text-translate="true">Root key</div>
+        <div class="col-md-9 ps-0">
+            <form method="post" asp-action="RotateRootKey" asp-route-storeId="@Model.StoreId" class="d-flex flex-wrap align-items-center column-gap-2">
+                <code id="RootKeyId">@Model.RootKeyId</code>
+                <span class="text-secondary small">@ViewLocalizer["since {0}", Model.RootKeyCreatedAt.ToString("yyyy-MM-dd")]</span>
+                <button type="submit" class="btn btn-link p-0" id="RotateRootKey" text-translate="true">Rotate</button>
+            </form>
+            <div class="form-text" text-translate="true">Signs every macaroon and never leaves BTCPay. After a rotation, older tokens stay valid until they expire.</div>
+        </div>
+    </div>
+    <div class="row py-3 mx-0">
+        <div class="col-md-3 ps-0 text-secondary mb-1 mb-md-0" text-translate="true">Max price</div>
+        <div class="col-md-9 ps-0">
+            <form method="post" asp-action="SaveSettings" asp-route-storeId="@Model.StoreId" class="d-flex align-items-center gap-2">
+                <div class="input-group" style="max-width: 16rem">
+                    <input type="number" name="maxPriceSats" id="MaxPriceSats" min="1" inputmode="numeric" class="form-control" value="@Model.Settings.MaxPriceSats" aria-label="@StringLocalizer["Max price"]" />
+                    <span class="input-group-text" text-translate="true">sats</span>
+                </div>
+                <button type="submit" class="btn btn-secondary" id="SaveMaxPrice" text-translate="true">Save</button>
+            </form>
+            <div class="form-text" text-translate="true">Per challenge. Challenges above this amount are refused, in case an endpoint price is set wrong.</div>
+        </div>
+    </div>
+</div>
+
+<h3 class="mb-3" text-translate="true">Discovery</h3>
+<form method="post" asp-action="SaveSettings" asp-route-storeId="@Model.StoreId" class="mb-5">
+    <div class="d-flex align-items-center gap-3">
+        <input type="checkbox" name="discovery" value="true" id="Discovery" class="btcpay-toggle" checked="@Model.Settings.Discovery" />
+        <input type="hidden" name="discovery" value="false" />
+        <span>
+            <label for="Discovery" text-translate="true">Publish</label>
+            <a href="~/.well-known/l402.json" target="_blank" rel="noreferrer"><code>/.well-known/l402.json</code></a>
+            <span text-translate="true">on this BTCPay Server</span>
+        </span>
+    </div>
+    <div class="form-text" text-translate="true">Lets agents find endpoints, prices and token lifetimes without docs. Lists enabled endpoints that have a public URL.</div>
+</form>

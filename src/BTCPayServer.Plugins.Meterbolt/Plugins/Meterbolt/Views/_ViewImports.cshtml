@@ -1,0 +1,18 @@
+@using BTCPayServer
+@using BTCPayServer.Abstractions.Extensions
+@using BTCPayServer.Abstractions.Models
+@using BTCPayServer.Abstractions.Services
+@using BTCPayServer.Client
+@using BTCPayServer.Plugins.Meterbolt
+@using BTCPayServer.Plugins.Meterbolt.Controllers
+@using BTCPayServer.Plugins.Meterbolt.Data
+@using Microsoft.AspNetCore.Mvc.TagHelpers
+@using Microsoft.AspNetCore.Routing
+@inject Microsoft.AspNetCore.Mvc.Localization.ViewLocalizer ViewLocalizer
+@inject Microsoft.Extensions.Localization.IStringLocalizer StringLocalizer
+@inject Safe Safe
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+@addTagHelper *, BTCPayServer
+@addTagHelper *, BTCPayServer.Abstractions
+
+@namespace BTCPayServer.Plugins.Meterbolt.Views

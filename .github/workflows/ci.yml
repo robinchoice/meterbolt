@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Start regtest dependencies (bitcoind, NBXplorer, Postgres, Lightning)
+        working-directory: submodules/btcpayserver/BTCPayServer.Tests
+        run: docker compose up -d dev
+
+      - name: Build
+        run: dotnet build tests/BTCPayServer.Plugins.Meterbolt.Tests
+
+      - name: Unit tests
+        run: dotnet test --project tests/BTCPayServer.Plugins.Meterbolt.Tests --no-build --filter-trait "Fast=Fast"
+
+      - name: Integration tests (regtest)
+        run: dotnet test --project tests/BTCPayServer.Plugins.Meterbolt.Tests --no-build --filter-trait "Integration=Integration"
+
+      - name: Release build
+        run: dotnet build src/BTCPayServer.Plugins.Meterbolt -c Release
+
+      - name: Dependency logs on failure
+        if: failure()
+        working-directory: submodules/btcpayserver/BTCPayServer.Tests
+        run: docker compose logs --tail=200

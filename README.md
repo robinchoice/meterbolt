@@ -1,161 +1,76 @@
-# BTCPay Server Plugin Template
+# Meterbolt – L402 paid APIs
 
-A template for your own [BTCPay Server](https://github.com/btcpayserver) plugin.
+Sell API calls to agents and apps over Lightning, straight from your own BTCPay Server.
 
-Learn more in our [plugin documentation](submodules/btcpayserver/docs/developers/plugins/README.md).
+Meterbolt adds [L402](https://docs.lightning.engineering/the-lightning-network/l402) to BTCPay Server. Your API asks BTCPay for a challenge, the client pays a Lightning invoice, and your API checks the token with BTCPay before it answers. It works with every Lightning backend BTCPay supports, and every payment is a normal BTCPay invoice, so reporting, exports and webhooks keep working.
+
+![Store page](docs/store-page.png)
+
+## What you get
+
+- **Paid endpoints per store.** Name, price in sats, token lifetime (from one call to 30 days) and an optional public URL. The price is always set in BTCPay, never by the client.
+- **Two API calls for your app.** Create a challenge (macaroon + BOLT11 invoice) and verify a token. A store API key with just these two permissions is all your app needs; the macaroon root keys never leave BTCPay.
+- **Safety controls.** Rotate the root key at any time (older tokens stay valid until they expire), cap the price of a single challenge, revoke single tokens, disable an endpoint.
+- **Numbers without tracking.** Revenue and paid calls of the last 7 days per endpoint. Meterbolt stores no data about buyers, only tokens and invoices.
+- **Discovery.** Optionally publish `/.well-known/l402.json` so agents find your endpoints, prices and token lifetimes.
+
+Proxy mode (BTCPay forwards paid requests to your API) is planned for a later version.
 
 ## Requirements
 
-- .NET SDK 10.0 or later
-- Git with submodule support
-- Docker, for running the BTCPay Server development dependencies
+- BTCPay Server 2.4.7 or later
+- Lightning set up for the store (any backend: LND, Core Lightning, Eclair, LNbits, …)
 
-## Getting started
+## Setup
 
-First, clone this repository:
+1. Install the plugin and open your store. **L402 Paid APIs** appears under *Plugins* in the menu.
+2. Click **New paid endpoint**, give it a name, a price and a token lifetime.
+3. Under **Access & safety**, click **Create** next to *App key*. BTCPay asks you to confirm a key with only `btcpay.store.canissuel402` and `btcpay.store.canverifyl402` for this store. Give that key to your API.
+4. Open the endpoint and follow the **Integrate** tab.
 
-```bash
-mkdir my-plugin && cd my-plugin
-git clone --recurse-submodules https://github.com/btcpayserver/btcpayserver-plugin-template.git .
+## How your API uses it
+
+When a request arrives without a valid token, ask BTCPay for a challenge:
+
+```http
+POST /api/v1/stores/{storeId}/l402/endpoints/{slug}/challenges
+Authorization: token <app key>
 ```
 
-If you already cloned without submodules, initialize them with:
-
-```bash
-git submodule update --init --recursive
+```json
+{
+  "macaroon": "AgJCAAD…",
+  "invoice": "lnbc100n1…",
+  "paymentHash": "d706c3ca…",
+  "invoiceId": "5GPR8Wdh…",
+  "amountSats": 10,
+  "invoiceExpiresAt": 1794590217,
+  "expiresAt": 1794676017,
+  "wwwAuthenticate": "L402 macaroon=\"AgJCAAD…\", invoice=\"lnbc100n1…\""
+}
 ```
 
-### Update the btcpayserver submodule to the latest tagged version
+Answer the client with `402 Payment Required` and the `WWW-Authenticate` value. The client pays the invoice and retries with `Authorization: L402 <macaroon>:<preimage>`. Pass that value to BTCPay:
 
-Make sure that your submodules reference the latest stable version of BTCPay Server.
+```http
+POST /api/v1/stores/{storeId}/l402/verify
+Authorization: token <app key>
 
-```bash
-cd submodules/btcpayserver
-git fetch --tags
-latest_tag=$(
-  git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
-    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-    | sort -V \
-    | tail -n 1
-)
-git checkout "$latest_tag"
-cd ../..
+{ "authorization": "L402 AgJCAAD…:fdd3e006…", "endpoint": "song-lookup" }
 ```
 
-Update `src/BTCPayServer.Plugins.Template/Plugin.cs`'s `PluginDependency` with the version of BTCPayServer that you fetched in `latest_tag`.
-
-### Rename the plugin
-
-For renaming the plugin, choose a name following .NET assembly naming conventions: PascalCase, optionally separated by dots. For example: `MyPlugin` or `MyCompany.MyPlugin`.
-
-Then replace all occurrences of `BTCPayServer.Plugins.Template` with `PLUGIN_NAME`.
-
-Here is a script you can run to do this automatically:
-```bash
-PLUGIN_NAME="MyPlugin"
-OLD_NAME="BTCPayServer.Plugins.Template"
-AREA_NAME="MyPlugin"
-OLD_AREA="TemplateArea"
-export OLD_NAME PLUGIN_NAME AREA_NAME OLD_AREA
-
-git grep -l -z "$OLD_NAME" -- . ':!submodules' | xargs -0 perl -pi -e 's/\Q$ENV{OLD_NAME}\E/$ENV{PLUGIN_NAME}/g'
-
-git mv "src/$OLD_NAME" "src/$PLUGIN_NAME"
-git mv "src/$PLUGIN_NAME/$OLD_NAME.csproj" "src/$PLUGIN_NAME/$PLUGIN_NAME.csproj"
-git mv "src/$PLUGIN_NAME/Plugins/$OLD_AREA" "src/$PLUGIN_NAME/Plugins/$AREA_NAME"
-perl -pi -e 's/\Q"$ENV{OLD_AREA}"\E/"$ENV{AREA_NAME}"/' "src/$PLUGIN_NAME/Plugin.cs"
-
-git mv "tests/$OLD_NAME.Tests" "tests/$PLUGIN_NAME.Tests"
-git mv "tests/$PLUGIN_NAME.Tests/$OLD_NAME.Tests.csproj" "tests/$PLUGIN_NAME.Tests/$PLUGIN_NAME.Tests.csproj"
-
-git mv "$OLD_NAME.slnx" "$PLUGIN_NAME.slnx"
+```json
+{ "valid": true, "endpoint": "song-lookup", "paymentHash": "d706c3ca…", "expiresAt": 1794676017, "singleUse": false, "uses": 1 }
 ```
 
-Then update the plugin metadata in `src/<YourPluginName>/<YourPluginName>.csproj`:
+Rejected tokens return `{ "valid": false, "reason": "…" }` with one of `malformed`, `unknown-token`, `invalid-signature`, `wrong-endpoint`, `unknown-caveat`, `expired`, `invalid-preimage`, `revoked`, `endpoint-disabled`, `not-paid`, `already-used`. Each successful verification counts as one paid call. Both calls are documented in your server's API docs (`/docs`).
 
-- `Product`
-- `Description`
-- `Version`
+Verification checks the macaroon signature, its caveats (endpoint and expiry), that the SHA-256 of the preimage equals the payment hash, and that the BTCPay invoice is settled. Macaroons use the same format as [Aperture](https://github.com/lightninglabs/aperture), so existing L402 clients work.
 
-The area name must match the directory between `Plugins` and `Views`. The
-script updates both. Then customize the example controller, route, view text,
-and test for your plugin.
+## Development
 
-Verify that the plugin builds:
+See [AGENTS.md](AGENTS.md) for building, testing and running a local BTCPay instance. No local .NET install is needed; everything runs in Docker.
 
-```bash
-dotnet build
-```
+## License
 
-### Clean up template project references
-
-Finally, clean up the remaining template project references.
-
-Replace this README with documentation for your own plugin.
-Keep it user-centric. Document what the plugin does and how to configure it. We advise to include screenshots and video.
-Avoid developer-centric jargon.
-
-You may also want to review and update:
-
-- [LICENSE](LICENSE)
-- package metadata in your plugin `.csproj`
-
-### Switching this branch to your own git repository
-
-Switch `origin` to your own repository:
-
-```bash
-git remote set-url origin git@github.com:<your-github-user>/<your-plugin-repository>.git
-```
-
-If you want to start your plugin without the template's git history, create a new initial commit:
-
-```bash
-git switch --orphan initial
-git add -A
-git commit -m "Initial commit"
-git branch -M main
-```
-
-Then push it to your repository.
-
-```bash
-git push --force-with-lease origin main
-```
-
-## Debugging the plugin
-
-Register the plugin with the BTCPay Server development environment:
-
-```bash
-./plugin-register.sh
-```
-
-It will configure BTCPay Server for loading your plugin during debug.
-
-Start the BTCPay Server development dependencies:
-
-```bash
-cd submodules/btcpayserver/BTCPayServer.Tests
-docker compose up -d dev
-```
-
-Open the solution file in your IDE and use the `BTCPayServer: Bitcoin-HTTPS` launch profile. When the debugger starts BTCPay Server, it should load your plugin. A breakpoint in `src/<YourPluginName>/Plugin.cs`, such as inside `Plugin.Execute`, should be hit during startup.
-
-Sign in and open `/template` to verify the example page and account-menu entry.
-
-## Adding plugin code
-
-The template includes a working authenticated controller, Razor view, and
-account-menu UI extension. Views are stored under
-`Plugins/{AreaName}/Views`, matching BTCPay Server's area view conventions, so
-controller actions can use `View()` without an explicit view path. UI
-extensions still use `Plugin.ViewsDirectory` because they render outside the
-controller's area context.
-
-Register additional services, controllers, hosted services, migrations, or
-other plugin components from `Plugin.Execute`.
-
-If your plugin needs Entity Framework or bundled project dependencies, see the commented examples in the plugin `.csproj` file.
-
-You can take examples from [other plugins](https://plugin-builder.btcpayserver.org/) and BTCPay Server's own system plugins in `submodules/btcpayserver/BTCPayServer/Plugins`.
+MIT

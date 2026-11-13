@@ -1,0 +1,169 @@
+@model DetailViewModel
+@{
+    var e = Model.Endpoint;
+    ViewData.SetLayoutModel(new LayoutModel(Plugin.Area, e.Name).SetCategory(WellKnownCategories.Store));
+    var api = $"{Model.ServerUrl}/api/v1/stores/{Model.StoreId}/l402";
+}
+
+@section PageFootContent {
+    <script>
+        // Open the tab named in the URL fragment, e.g. after revoking a token.
+        const tab = location.hash && document.querySelector(`[data-bs-target="${location.hash}"]`)
+        if (tab) bootstrap.Tab.getOrCreateInstance(tab).show()
+        // BTCPay's shared confirm modal keeps the first action it was given; reset it after closing.
+        document.getElementById('ConfirmModal').addEventListener('hidden.bs.modal', e => e.target.querySelector('form').removeAttribute('action'))
+    </script>
+}
+
+<div class="sticky-header">
+    <vc:title-header />
+    <div class="d-flex gap-2">
+        <a class="btn btn-secondary" asp-action="Edit" asp-route-storeId="@Model.StoreId" asp-route-id="@e.Id" id="EditEndpoint" text-translate="true">Edit</a>
+        <form method="post" asp-action="Toggle" asp-route-storeId="@Model.StoreId" asp-route-id="@e.Id">
+            @if (e.Enabled)
+            {
+                <button type="submit" class="btn btn-outline-danger" id="ToggleEndpoint" text-translate="true">Disable</button>
+            }
+            else
+            {
+                <button type="submit" class="btn btn-primary" id="ToggleEndpoint" text-translate="true">Enable</button>
+            }
+        </form>
+    </div>
+</div>
+<partial name="_StatusMessage" />
+
+<p class="mb-1"><a asp-action="Index" asp-route-storeId="@Model.StoreId">← <span text-translate="true">All endpoints</span></a></p>
+<p class="text-secondary mb-4" id="EndpointSummary">
+    @ViewLocalizer["{0} sats per token · valid {1} · Greenfield mode", e.PriceSats.ToString("N0"), Lifetimes.Describe(e)]
+    @if (!e.Enabled)
+    {
+        <span class="badge badge-expired ms-1" text-translate="true">Disabled</span>
+    }
+</p>
+
+<ul class="nav nav-underline mb-4" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#integrate" type="button" role="tab" text-translate="true">Integrate</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#payments" type="button" role="tab" text-translate="true">Payments</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tokens" type="button" role="tab">@ViewLocalizer["Tokens ({0})", Model.ActiveTokens.Count]</button>
+    </li>
+</ul>
+
+<div class="tab-content">
+    <div class="tab-pane fade show active" id="integrate" role="tabpanel">
+        <h5 text-translate="true">1. Your API asks BTCPay for a challenge</h5>
+        <pre class="p-3 rounded" style="white-space: pre-wrap; overflow-wrap: anywhere">POST @api/endpoints/@e.Slug/challenges
+Authorization: token &lt;key with @MeterboltPolicies.CanIssue&gt;
+
+→ 201 { "macaroon": "AgEE…", "invoice": "lnbc…", "paymentHash": "9f3c…",
+        "expiresAt": 1763129520, "wwwAuthenticate": "L402 macaroon=…" }</pre>
+        <h5 class="mt-4" text-translate="true">2. Your API answers the client</h5>
+        <pre class="p-3 rounded" style="white-space: pre-wrap; overflow-wrap: anywhere">HTTP/1.1 402 Payment Required
+WWW-Authenticate: L402 macaroon="AgEE…", invoice="lnbc…"</pre>
+        <h5 class="mt-4" text-translate="true">3. The client pays and retries, your API verifies</h5>
+        <pre class="p-3 rounded" style="white-space: pre-wrap; overflow-wrap: anywhere">POST @api/verify
+Authorization: token &lt;key with @MeterboltPolicies.CanVerify&gt;
+{ "authorization": "L402 AgEE…:a1b2c3…", "endpoint": "@e.Slug" }
+
+→ 200 { "valid": true, "endpoint": "@e.Slug", "expiresAt": 1763129520, "uses": 1 }</pre>
+        <p class="form-text" text-translate="true">Macaroon root keys stay in BTCPay. Your app holds nothing but a store-scoped API key.</p>
+    </div>
+
+    <div class="tab-pane fade" id="payments" role="tabpanel">
+        @if (Model.Payments.Count == 0)
+        {
+            <p class="text-secondary" text-translate="true">No challenges yet.</p>
+        }
+        else
+        {
+            <div class="table-responsive-md">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th text-translate="true">Time</th>
+                            <th text-translate="true">Amount</th>
+                            <th class="d-none d-sm-table-cell" text-translate="true">Invoice</th>
+                            <th class="text-end" text-translate="true">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in Model.Payments)
+                        {
+                            <tr>
+                                <td class="text-nowrap"><span class="text-secondary">@t.CreatedAt.ToString("yyyy-MM-dd")</span> @t.CreatedAt.ToString("HH:mm:ss")</td>
+                                <td class="text-nowrap">@t.PriceSats.ToString("N0") sats</td>
+                                <td class="d-none d-sm-table-cell"><a asp-area="" asp-controller="UIInvoice" asp-action="Invoice" asp-route-invoiceId="@t.InvoiceId"><code>@t.InvoiceId</code></a></td>
+                                <td class="text-end">
+                                    @switch (t.Status)
+                                    {
+                                        case TokenStatus.Paid:
+                                            <span class="badge badge-settled" text-translate="true">Settled</span>
+                                            break;
+                                        case TokenStatus.Expired:
+                                            <span class="badge badge-expired" text-translate="true">Expired</span>
+                                            break;
+                                        default:
+                                            <span class="badge badge-new" text-translate="true">Pending</span>
+                                            break;
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        <p class="form-text mt-3" text-translate="true">Every challenge is a normal BTCPay invoice, so reporting, exports and webhooks work as usual.</p>
+    </div>
+
+    <div class="tab-pane fade" id="tokens" role="tabpanel">
+        @if (Model.ActiveTokens.Count == 0)
+        {
+            <p class="text-secondary" text-translate="true">No paid tokens are currently valid.</p>
+        }
+        else
+        {
+            <div class="table-responsive-md">
+                <table class="table table-hover mb-0">
+                    <thead>
+                        <tr>
+                            <th text-translate="true">Token</th>
+                            <th text-translate="true">Paid</th>
+                            <th text-translate="true">Expires</th>
+                            <th class="d-none d-sm-table-cell" text-translate="true">Uses</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in Model.ActiveTokens)
+                        {
+                            <tr>
+                                <td><code title="@t.PaymentHash">@t.PaymentHash[..8]…</code></td>
+                                <td class="small"><span class="text-nowrap">@t.PaidAt?.ToString("yyyy-MM-dd")</span><span class="d-block d-sm-inline"> @t.PaidAt?.ToString("HH:mm")</span></td>
+                                <td class="small"><span class="text-nowrap">@t.ExpiresAt.ToString("yyyy-MM-dd")</span><span class="d-block d-sm-inline"> @t.ExpiresAt.ToString("HH:mm")</span></td>
+                                <td class="d-none d-sm-table-cell">@t.Uses</td>
+                                <td class="text-end">
+                                    <a class="text-danger" asp-action="Revoke" asp-route-storeId="@Model.StoreId" asp-route-id="@e.Id" asp-route-paymentHash="@t.PaymentHash"
+                                           data-bs-toggle="modal" data-bs-target="#ConfirmModal"
+                                           data-description="@StringLocalizer["The token {0}… stops working immediately. The payment is not refunded.", t.PaymentHash[..8]]" text-translate="true">Revoke</a>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        <form method="post" asp-action="RevokeByHash" asp-route-storeId="@Model.StoreId" asp-route-id="@e.Id" class="d-flex gap-2 mt-4" style="max-width: 40rem">
+            <input name="paymentHash" class="form-control" required pattern="[0-9a-fA-F]{64}" placeholder="@StringLocalizer["Payment hash of any token"]" aria-label="@StringLocalizer["Payment hash"]" />
+            <button type="submit" class="btn btn-outline-danger text-nowrap" id="RevokeByHash" text-translate="true">Revoke</button>
+        </form>
+        <p class="form-text mt-3" text-translate="true">The list shows the 50 newest paid tokens that have not expired. Revoke older ones by payment hash, as returned by verify. Nothing about the buyer is stored, only the payment hash.</p>
+    </div>
+</div>
+
+<partial name="_Confirm" model="@(new ConfirmModel(StringLocalizer["Revoke token"], StringLocalizer["The token stops working immediately. The payment is not refunded."], StringLocalizer["Revoke"]))" />

@@ -1,0 +1,72 @@
+@model EndpointViewModel
+@{
+    var isNew = Model.Id is null;
+    var title = isNew ? StringLocalizer["New paid endpoint"] : StringLocalizer["Edit {0}", Model.Name];
+    ViewData.SetLayoutModel(new LayoutModel(Plugin.Area, title).SetCategory(WellKnownCategories.Store));
+    var storeId = Context.GetRouteValue("storeId");
+}
+
+<form method="post" asp-action="Save" asp-route-storeId="@storeId" asp-route-id="@Model.Id">
+    <div class="sticky-header">
+        <vc:title-header />
+        <button id="page-primary" type="submit" class="btn btn-primary">@(isNew ? StringLocalizer["Create"] : StringLocalizer["Save"])</button>
+    </div>
+    <partial name="_StatusMessage" />
+    <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+
+    <div class="row">
+        <div class="col-xl-8 col-xxl-constrain">
+            <div class="form-group">
+                <label asp-for="Name" class="form-label" data-required></label>
+                <input asp-for="Name" class="form-control" required />
+                <span asp-validation-for="Name" class="text-danger"></span>
+            </div>
+            <div class="form-group">
+                <label asp-for="Slug" class="form-label"></label>
+                @if (isNew)
+                {
+                    <input asp-for="Slug" class="form-control" placeholder="@StringLocalizer["Generated from the name"]" />
+                    <div class="form-text" text-translate="true">Part of the API path and the macaroon. Cannot be changed later.</div>
+                }
+                else
+                {
+                    <input asp-for="Slug" class="form-control" readonly />
+                }
+                <span asp-validation-for="Slug" class="text-danger"></span>
+            </div>
+            <div class="form-group">
+                <label asp-for="PriceSats" class="form-label" data-required></label>
+                <div class="input-group" style="max-width: 16rem">
+                    <input asp-for="PriceSats" type="number" min="1" max="@Model.MaxPriceSats" inputmode="numeric" class="form-control" required />
+                    <span class="input-group-text">sats</span>
+                </div>
+                <div class="form-text">@ViewLocalizer["Set by BTCPay, never by the client. Store maximum: {0} sats.", Model.MaxPriceSats.ToString("N0")]</div>
+                <span asp-validation-for="PriceSats" class="text-danger"></span>
+            </div>
+            <div class="form-group">
+                <label asp-for="Lifetime" class="form-label"></label>
+                <select asp-for="Lifetime" class="form-select w-auto">
+                    @foreach (var o in Lifetimes.All)
+                    {
+                        <option value="@o.Key">@StringLocalizer[o.Label]</option>
+                    }
+                </select>
+                <div class="form-text" text-translate="true">Counted from the challenge. “1 call” tokens verify once and expire after 24 h.</div>
+                <span asp-validation-for="Lifetime" class="text-danger"></span>
+            </div>
+            <div class="form-group">
+                <label for="Mode" class="form-label" text-translate="true">Mode</label>
+                <select id="Mode" class="form-select w-auto">
+                    <option selected text-translate="true">Greenfield: my API calls BTCPay</option>
+                    <option disabled text-translate="true">Proxy: BTCPay forwards to my API (phase 2)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label asp-for="PublicUrl" class="form-label"></label>
+                <input asp-for="PublicUrl" class="form-control" placeholder="https://api.example.org/v1/lyrics" />
+                <div class="form-text" text-translate="true">Where agents call your API. Shown in the discovery document.</div>
+                <span asp-validation-for="PublicUrl" class="text-danger"></span>
+            </div>
+        </div>
+    </div>
+</form>
